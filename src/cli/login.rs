@@ -23,6 +23,7 @@ pub struct LoginOptions {
     pub print_auth_url: bool,
     pub callback_url: Option<String>,
     pub auth_code: Option<String>,
+    pub github_host: Option<String>,
     pub json: bool,
     pub complete: bool,
     pub no_validate: bool,
@@ -104,6 +105,7 @@ enum PendingScriptableLogin {
         user_code: String,
         verification_uri: String,
         interval: u64,
+        domain: String,
     },
 }
 
@@ -311,7 +313,7 @@ pub async fn run_login_provider(
             }
             LoginProviderTarget::Cursor => login_cursor_flow().map(|_| LoginFlowOutcome::Completed),
             LoginProviderTarget::Copilot => {
-                login_copilot_flow(options.no_browser).map(|_| LoginFlowOutcome::Completed)
+                login_copilot_flow(&options).map(|_| LoginFlowOutcome::Completed)
             }
             LoginProviderTarget::Gemini => login_gemini_flow(options.no_browser)
                 .await
@@ -1008,18 +1010,59 @@ fn login_cursor_flow() -> Result<()> {
     Ok(())
 }
 
-fn login_copilot_flow(no_browser: bool) -> Result<()> {
+fn login_copilot_flow(options: &LoginOptions) -> Result<()> {
     eprintln!("Starting GitHub Copilot login...");
 
     tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(login_copilot_device_flow(no_browser))
+        tokio::runtime::Handle::current().block_on(login_copilot_device_flow(options))
     })
 }
 
-async fn login_copilot_device_flow(no_browser: bool) -> Result<()> {
-    let client = crate::provider::shared_http_client();
+fn resolve_copilot_github_host(options: &LoginOptions) -> Result<String> {
+    let host = resolve_copilot_github_host_static(options)?;
+    if host != "github.com" || !io::stdin().is_terminal() {
+        return Ok(host);
+    }
 
-    let device_resp = crate::auth::copilot::initiate_device_flow(&client).await?;
+    eprintln!("GitHub Copilot login. Choose a GitHub deployment:");
+    eprintln!("  [1] github.com");
+    eprintln!("  [2] GitHub Enterprise (ghe.com)");
+    let choice = read_line_trimmed("Enter 1-2 [1]: ")?;
+    match choice.trim() {
+        "" | "1" => Ok("github.com".to_string()),
+        "2" => {
+            let raw =
+                read_line_trimmed("GitHub Enterprise domain (for example company.ghe.com): ")?;
+            auth::copilot::normalize_github_domain(&raw).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Invalid GitHub Enterprise host '{}'. Use github.com or a *.ghe.com domain.",
+                    raw
+                )
+            })
+        }
+        other => anyhow::bail!("Invalid choice '{}'. Use 1 or 2.", other),
+    }
+}
+
+fn resolve_copilot_github_host_static(options: &LoginOptions) -> Result<String> {
+    if let Some(host) = options.github_host.as_deref() {
+        return auth::copilot::normalize_github_domain(host).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid GitHub Enterprise host '{}'. Use github.com or a *.ghe.com domain.",
+                host
+            )
+        });
+    }
+
+    let host = auth::copilot::copilot_github_host();
+    Ok(host)
+}
+
+async fn login_copilot_device_flow(options: &LoginOptions) -> Result<()> {
+    let client = crate::provider::shared_http_client();
+    let host = resolve_copilot_github_host(options)?;
+
+    let device_resp = crate::auth::copilot::initiate_device_flow_for_host(&client, &host).await?;
 
     eprintln!();
     eprintln!("  Open this URL in your browser:");
@@ -1037,20 +1080,30 @@ async fn login_copilot_device_flow(no_browser: bool) -> Result<()> {
     eprintln!();
     eprintln!("  Waiting for authorization...");
 
-    maybe_open_browser(&device_resp.verification_uri, no_browser);
+    maybe_open_browser(&device_resp.verification_uri, options.no_browser);
 
-    let token = crate::auth::copilot::poll_for_access_token(
+    let token = crate::auth::copilot::poll_for_access_token_for_host(
         &client,
         &device_resp.device_code,
         device_resp.interval,
+        &host,
     )
     .await?;
 
-    let username = crate::auth::copilot::fetch_github_username(&client, &token)
+    let username = crate::auth::copilot::fetch_github_username_for_host(&client, &token, &host)
         .await
         .unwrap_or_else(|_| "unknown".to_string());
 
-    crate::auth::copilot::save_github_token(&token, &username)?;
+    let api_endpoint = crate::auth::copilot::fetch_copilot_api_endpoint(&client, &token, &host)
+        .await
+        .unwrap_or(None);
+
+    crate::auth::copilot::save_github_token_for_host(
+        &token,
+        &username,
+        &host,
+        api_endpoint.as_deref(),
+    )?;
 
     eprintln!("  ✓ Authenticated as {} via GitHub Copilot", username);
     crate::telemetry::record_auth_success("copilot", "oauth_device_code");

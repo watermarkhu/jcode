@@ -211,6 +211,10 @@ pub(crate) enum Command {
         #[arg(long)]
         no_validate: bool,
 
+        /// GitHub Enterprise host for Copilot login (for example company.ghe.com).
+        #[arg(long, alias = "github-enterprise")]
+        github_host: Option<String>,
+
         /// Gmail/Google access tier for non-interactive flows. Defaults to full.
         #[arg(long, value_enum)]
         google_access_tier: Option<GoogleAccessTierArg>,

@@ -1675,18 +1675,20 @@ impl App {
 
         tokio::spawn(async move {
             let client = crate::provider::shared_http_client();
+            let host = crate::auth::copilot::copilot_github_host();
 
-            let device_resp = match crate::auth::copilot::initiate_device_flow(&client).await {
-                Ok(resp) => resp,
-                Err(e) => {
-                    Bus::global().publish(BusEvent::LoginCompleted(LoginCompleted {
-                        provider: "copilot".to_string(),
-                        success: false,
-                        message: format!("Copilot device flow failed: {}", e),
-                    }));
-                    return;
-                }
-            };
+            let device_resp =
+                match crate::auth::copilot::initiate_device_flow_for_host(&client, &host).await {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        Bus::global().publish(BusEvent::LoginCompleted(LoginCompleted {
+                            provider: "copilot".to_string(),
+                            success: false,
+                            message: format!("Copilot device flow failed: {}", e),
+                        }));
+                        return;
+                    }
+                };
 
             let user_code = device_resp.user_code.clone();
             let verification_uri = device_resp.verification_uri.clone();
@@ -1722,10 +1724,11 @@ impl App {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             let _ = Self::open_auth_browser(&verification_uri);
 
-            let token = match crate::auth::copilot::poll_for_access_token(
+            let token = match crate::auth::copilot::poll_for_access_token_for_host(
                 &client,
                 &device_resp.device_code,
                 device_resp.interval,
+                &host,
             )
             .await
             {
@@ -1740,11 +1743,22 @@ impl App {
                 }
             };
 
-            let username = crate::auth::copilot::fetch_github_username(&client, &token)
-                .await
-                .unwrap_or_else(|_| "unknown".to_string());
+            let username =
+                crate::auth::copilot::fetch_github_username_for_host(&client, &token, &host)
+                    .await
+                    .unwrap_or_else(|_| "unknown".to_string());
 
-            match crate::auth::copilot::save_github_token(&token, &username) {
+            let api_endpoint =
+                crate::auth::copilot::fetch_copilot_api_endpoint(&client, &token, &host)
+                    .await
+                    .unwrap_or(None);
+
+            match crate::auth::copilot::save_github_token_for_host(
+                &token,
+                &username,
+                &host,
+                api_endpoint.as_deref(),
+            ) {
                 Ok(()) => {
                     Bus::global().publish(BusEvent::LoginCompleted(LoginCompleted {
                         provider: "copilot".to_string(),

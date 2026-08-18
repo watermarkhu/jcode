@@ -32,8 +32,7 @@ fn generic_credential_paths_for_provider(
             {
                 vec![config_dir.join(env_file)]
             } else {
-                let resolved =
-                    crate::provider_catalog::resolve_openai_compatible_profile(profile);
+                let resolved = crate::provider_catalog::resolve_openai_compatible_profile(profile);
                 vec![config_dir.join(resolved.env_file)]
             }
         }
@@ -257,10 +256,11 @@ async fn probe_google_auth(report: &mut AuthTestProviderReport) {
 }
 
 async fn probe_copilot_auth(report: &mut AuthTestProviderReport) {
+    let host = crate::auth::copilot::copilot_github_host();
     if let Some(token) = push_result_step(
         report,
         "credential_probe",
-        crate::auth::copilot::load_github_token(),
+        crate::auth::copilot::load_github_token_for_host(&host),
         |token| {
             format!(
                 "Loaded GitHub OAuth token for Copilot ({} chars).",
@@ -272,7 +272,7 @@ async fn probe_copilot_auth(report: &mut AuthTestProviderReport) {
         push_result_step(
             report,
             "refresh_probe",
-            crate::auth::copilot::exchange_github_token(&client, &token).await,
+            crate::auth::copilot::exchange_github_token_for_host(&client, &token, &host).await,
             |api_token| {
                 format!(
                     "Exchanged GitHub token for Copilot API token (expires_at={}).",

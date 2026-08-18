@@ -1623,12 +1623,14 @@ fn copilot_source() -> Option<(AuthCredentialSource, String)> {
         ));
     }
 
-    crate::auth::copilot::load_github_token().ok().map(|_| {
-        (
-            AuthCredentialSource::LocalCliSession,
-            "gh CLI token fallback".to_string(),
-        )
-    })
+    crate::auth::copilot::load_github_token_for_host(&crate::auth::copilot::copilot_github_host())
+        .ok()
+        .map(|_| {
+            (
+                AuthCredentialSource::LocalCliSession,
+                "local Copilot token".to_string(),
+            )
+        })
 }
 
 fn env_var_nonempty(key: &str) -> bool {

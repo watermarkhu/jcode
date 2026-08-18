@@ -42,6 +42,8 @@ pub struct CopilotApiProvider {
     client: reqwest::Client,
     model: Arc<RwLock<String>>,
     github_token: String,
+    host: String,
+    api_base: String,
     bearer_token: Arc<tokio::sync::RwLock<Option<copilot_auth::CopilotApiToken>>>,
     fetched_models: Arc<RwLock<Vec<String>>>,
     catalog_source: Arc<RwLock<CatalogSource>>,
@@ -146,7 +148,12 @@ impl CopilotApiProvider {
     }
 
     pub fn new() -> Result<Self> {
-        let github_token = copilot_auth::load_github_token()?;
+        let host = copilot_auth::copilot_github_host();
+        let github_token = copilot_auth::load_github_token_for_host(&host)?;
+        let api_base = copilot_auth::copilot_base_url(
+            copilot_auth::copilot_api_endpoint_for_host(&host).as_deref(),
+            &host,
+        );
         let model =
             std::env::var("JCODE_COPILOT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
 
@@ -154,6 +161,8 @@ impl CopilotApiProvider {
             client: jcode_provider_core::shared_http_client(),
             model: Arc::new(RwLock::new(model)),
             github_token,
+            host,
+            api_base,
             bearer_token: Arc::new(tokio::sync::RwLock::new(None)),
             fetched_models: Arc::new(RwLock::new(Vec::new())),
             catalog_source: Arc::new(RwLock::new(CatalogSource::None)),
@@ -183,6 +192,11 @@ impl CopilotApiProvider {
     }
 
     pub fn new_with_token(github_token: String) -> Self {
+        let host = copilot_auth::copilot_github_host();
+        let api_base = copilot_auth::copilot_base_url(
+            copilot_auth::copilot_api_endpoint_for_host(&host).as_deref(),
+            &host,
+        );
         let model =
             std::env::var("JCODE_COPILOT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
 
@@ -190,6 +204,8 @@ impl CopilotApiProvider {
             client: jcode_provider_core::shared_http_client(),
             model: Arc::new(RwLock::new(model)),
             github_token,
+            host,
+            api_base,
             bearer_token: Arc::new(tokio::sync::RwLock::new(None)),
             fetched_models: Arc::new(RwLock::new(Vec::new())),
             catalog_source: Arc::new(RwLock::new(CatalogSource::None)),
@@ -326,7 +342,7 @@ impl CopilotApiProvider {
         };
 
         let fetch_start = std::time::Instant::now();
-        match copilot_auth::fetch_available_models(&self.client, &bearer).await {
+        match copilot_auth::fetch_available_models(&self.client, &bearer, &self.api_base).await {
             Ok(models) => {
                 let picker_models: Vec<String> = models
                     .iter()
@@ -415,8 +431,12 @@ impl CopilotApiProvider {
         }
 
         // Need to refresh
-        let new_token =
-            copilot_auth::exchange_github_token(&self.client, &self.github_token).await?;
+        let new_token = copilot_auth::exchange_github_token_for_host(
+            &self.client,
+            &self.github_token,
+            &self.host,
+        )
+        .await?;
         let token_str = new_token.token.clone();
         *self.bearer_token.write().await = Some(new_token);
         Ok(token_str)
@@ -523,10 +543,7 @@ impl CopilotApiProvider {
             };
 
             let resp = attempt_client
-                .post(format!(
-                    "{}/chat/completions",
-                    copilot_auth::COPILOT_API_BASE
-                ))
+                .post(format!("{}/chat/completions", self.api_base))
                 .header("Authorization", format!("Bearer {}", bearer_token))
                 .header("Editor-Version", copilot_auth::EDITOR_VERSION)
                 .header("Editor-Plugin-Version", copilot_auth::EDITOR_PLUGIN_VERSION)
@@ -942,6 +959,8 @@ impl Provider for CopilotApiProvider {
             client: self.client.clone(),
             model: self.model.clone(),
             github_token: self.github_token.clone(),
+            host: self.host.clone(),
+            api_base: self.api_base.clone(),
             bearer_token: self.bearer_token.clone(),
             fetched_models: self.fetched_models.clone(),
             catalog_source: self.catalog_source.clone(),
@@ -1056,6 +1075,8 @@ impl Provider for CopilotApiProvider {
             client: self.client.clone(),
             model: Arc::new(RwLock::new(self.model())),
             github_token: self.github_token.clone(),
+            host: self.host.clone(),
+            api_base: self.api_base.clone(),
             bearer_token: self.bearer_token.clone(),
             fetched_models: self.fetched_models.clone(),
             catalog_source: self.catalog_source.clone(),

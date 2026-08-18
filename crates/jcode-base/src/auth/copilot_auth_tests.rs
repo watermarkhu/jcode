@@ -34,6 +34,80 @@ fn copilot_api_token_expiring_within_buffer() {
 }
 
 #[test]
+fn normalize_github_domain_accepts_github_and_ghe_domains() {
+    assert_eq!(
+        normalize_github_domain("github.com").as_deref(),
+        Some("github.com")
+    );
+    assert_eq!(
+        normalize_github_domain("https://company.ghe.com/").as_deref(),
+        Some("company.ghe.com")
+    );
+    assert_eq!(
+        normalize_github_domain("company.ghe.com").as_deref(),
+        Some("company.ghe.com")
+    );
+    assert_eq!(
+        normalize_github_domain("HTTP://COMPANY.GHE.COM").as_deref(),
+        Some("company.ghe.com")
+    );
+}
+
+#[test]
+fn normalize_github_domain_rejects_non_github_hosts() {
+    assert_eq!(normalize_github_domain("gitlab.com"), None);
+    assert_eq!(normalize_github_domain("example.com"), None);
+    assert_eq!(normalize_github_domain(""), None);
+}
+
+#[test]
+fn copilot_base_url_prefers_account_endpoint() {
+    assert_eq!(
+        copilot_base_url(
+            Some("https://api.business.githubcopilot.com"),
+            "company.ghe.com",
+        ),
+        "https://api.business.githubcopilot.com"
+    );
+    assert_eq!(
+        copilot_base_url(
+            Some("https://api.business.githubcopilot.com/"),
+            "github.com"
+        ),
+        "https://api.business.githubcopilot.com"
+    );
+}
+
+#[test]
+fn copilot_base_url_falls_back_for_public_and_enterprise() {
+    assert_eq!(
+        copilot_base_url(None, "github.com"),
+        "https://api.githubcopilot.com"
+    );
+    assert_eq!(
+        copilot_base_url(None, "company.ghe.com"),
+        "https://copilot-api.company.ghe.com"
+    );
+}
+
+#[test]
+fn github_domain_url_builders() {
+    assert_eq!(
+        github_device_code_url("company.ghe.com"),
+        "https://company.ghe.com/login/device/code"
+    );
+    assert_eq!(
+        github_access_token_url("company.ghe.com"),
+        "https://company.ghe.com/login/oauth/access_token"
+    );
+    assert_eq!(github_api_base("github.com"), "https://api.github.com");
+    assert_eq!(
+        github_api_base("company.ghe.com"),
+        "https://api.company.ghe.com"
+    );
+}
+
+#[test]
 fn load_token_from_hosts_json() -> Result<()> {
     let dir = TempDir::new().map_err(|e| anyhow!(e))?;
     let hosts_path = dir.path().join("hosts.json");
@@ -232,6 +306,97 @@ fn save_github_token_creates_config_dir() -> Result<()> {
         crate::env::set_var("XDG_CONFIG_HOME", prev);
     } else {
         crate::env::remove_var("XDG_CONFIG_HOME");
+    }
+    Ok(())
+}
+
+#[test]
+fn save_github_token_for_host_writes_ghe_entry_and_endpoint() -> Result<()> {
+    let _guard = crate::storage::lock_test_env();
+    let dir = TempDir::new().map_err(|e| anyhow!(e))?;
+    let config_dir = dir.path().join("github-copilot");
+    let prev_jcode_home = std::env::var_os("JCODE_HOME");
+    let prev_xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
+
+    crate::env::remove_var("JCODE_HOME");
+    crate::env::set_var(
+        "XDG_CONFIG_HOME",
+        dir.path()
+            .to_str()
+            .ok_or_else(|| anyhow!("temp dir path should be valid UTF-8"))?,
+    );
+
+    save_github_token_for_host(
+        "gho_ghe_token",
+        "enterprise-user",
+        "company.ghe.com",
+        Some("https://api.business.githubcopilot.com/"),
+    )?;
+
+    let hosts_path = config_dir.join("hosts.json");
+    let raw = std::fs::read_to_string(&hosts_path)?;
+    assert!(raw.contains("company.ghe.com"), "hosts.json: {}", raw);
+    assert!(
+        raw.contains("api.business.githubcopilot.com"),
+        "hosts.json: {}",
+        raw
+    );
+
+    let (token, endpoint) =
+        load_token_and_endpoint_from_json(&hosts_path, Some("company.ghe.com"))?;
+    assert_eq!(token, "gho_ghe_token");
+    assert_eq!(
+        endpoint.as_deref(),
+        Some("https://api.business.githubcopilot.com")
+    );
+
+    if let Some(prev) = prev_jcode_home {
+        crate::env::set_var("JCODE_HOME", prev);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+    if let Some(prev) = prev_xdg_config_home {
+        crate::env::set_var("XDG_CONFIG_HOME", prev);
+    } else {
+        crate::env::remove_var("XDG_CONFIG_HOME");
+    }
+    Ok(())
+}
+
+#[test]
+fn save_github_token_for_host_persists_effective_host() -> Result<()> {
+    let _guard = crate::storage::lock_test_env();
+    let dir = TempDir::new().map_err(|e| anyhow!(e))?;
+    let saved: Vec<(String, Option<String>)> =
+        ["JCODE_HOME", "JCODE_COPILOT_GITHUB_HOST", "GH_HOST"]
+            .iter()
+            .map(|key| (key.to_string(), std::env::var(key).ok()))
+            .collect();
+
+    crate::env::set_var("JCODE_HOME", dir.path());
+    crate::env::remove_var("JCODE_COPILOT_GITHUB_HOST");
+    crate::env::remove_var("GH_HOST");
+
+    assert_eq!(copilot_github_host(), "github.com");
+
+    save_github_token_for_host(
+        "gho_ghe_token",
+        "enterprise-user",
+        "company.ghe.com",
+        Some("https://api.business.githubcopilot.com"),
+    )?;
+    assert_eq!(copilot_github_host(), "company.ghe.com");
+
+    crate::env::set_var("JCODE_COPILOT_GITHUB_HOST", "override.ghe.com");
+    assert_eq!(copilot_github_host(), "override.ghe.com");
+    crate::env::remove_var("JCODE_COPILOT_GITHUB_HOST");
+
+    for (key, value) in saved {
+        if let Some(value) = value {
+            crate::env::set_var(&key, value);
+        } else {
+            crate::env::remove_var(&key);
+        }
     }
     Ok(())
 }
@@ -515,6 +680,33 @@ fn load_token_multiple_hosts() -> Result<()> {
 }
 
 #[test]
+fn load_token_and_endpoint_prefers_requested_host() -> Result<()> {
+    let dir = TempDir::new().map_err(|e| anyhow!(e))?;
+    let path = dir.path().join("hosts.json");
+    let data = serde_json::json!({
+        "github.com": {
+            "oauth_token": "gho_public",
+            "user": "public"
+        },
+        "company.ghe.com": {
+            "oauth_token": "gho_enterprise",
+            "user": "enterprise",
+            "api_endpoint": "https://api.business.githubcopilot.com/"
+        }
+    });
+    std::fs::write(&path, serde_json::to_string(&data)?)?;
+
+    let (token, endpoint) =
+        load_token_and_endpoint_from_json(&path.to_path_buf(), Some("company.ghe.com"))?;
+    assert_eq!(token, "gho_enterprise");
+    assert_eq!(
+        endpoint.as_deref(),
+        Some("https://api.business.githubcopilot.com")
+    );
+    Ok(())
+}
+
+#[test]
 fn normalize_github_host_key_accepts_common_forms() {
     assert_eq!(
         normalize_github_host_key("https://github.com/login"),
@@ -527,6 +719,10 @@ fn normalize_github_host_key_accepts_common_forms() {
     assert_eq!(
         normalize_github_host_key("sub.github.com/path"),
         Some("sub.github.com".to_string())
+    );
+    assert_eq!(
+        normalize_github_host_key("company.ghe.com"),
+        Some("company.ghe.com".to_string())
     );
 }
 
