@@ -437,6 +437,21 @@ fn save_github_token_for_host_writes_ghe_entry_and_endpoint() -> Result<()> {
 }
 
 #[test]
+fn save_github_token_for_host_rejects_invalid_host() -> Result<()> {
+    let _guard = crate::storage::lock_test_env();
+    let dir = TempDir::new().map_err(|e| anyhow!(e))?;
+    let _env = EnvRestore::new(&["JCODE_HOME", "XDG_CONFIG_HOME"]);
+    crate::env::set_var("JCODE_HOME", dir.path());
+    crate::env::remove_var("XDG_CONFIG_HOME");
+
+    let err = save_github_token_for_host("gho_invalid", "user", "gitlab.com", None)
+        .expect_err("invalid host must be rejected");
+    assert!(err.to_string().contains("Invalid GitHub host"));
+    assert!(!ExternalCopilotAuthSource::HostsJson.path().exists());
+    Ok(())
+}
+
+#[test]
 fn save_github_token_for_host_persists_effective_host() -> Result<()> {
     let _guard = crate::storage::lock_test_env();
     let dir = TempDir::new().map_err(|e| anyhow!(e))?;

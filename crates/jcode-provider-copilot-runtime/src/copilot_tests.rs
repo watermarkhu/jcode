@@ -22,6 +22,24 @@ fn make_test_provider(fetched: Vec<String>) -> CopilotApiProvider {
 }
 
 #[test]
+fn persisted_catalog_path_scopes_by_host() {
+    let github =
+        CopilotApiProvider::persisted_catalog_path("github.com").expect("github catalog path");
+    let ghe =
+        CopilotApiProvider::persisted_catalog_path("company.ghe.com").expect("ghe catalog path");
+
+    assert_eq!(
+        github.file_name().and_then(|name| name.to_str()),
+        Some("copilot_models_cache.json")
+    );
+    assert_eq!(
+        ghe.file_name().and_then(|name| name.to_str()),
+        Some("copilot_models_cache_company_ghe_com.json")
+    );
+    assert_ne!(github, ghe);
+}
+
+#[test]
 fn available_models_display_returns_fetched_when_populated() {
     let fetched = vec![
         "claude-opus-4.6".to_string(),
