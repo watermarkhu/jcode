@@ -1670,23 +1670,32 @@ impl App {
     }
 
     fn start_copilot_login(&mut self) {
-        self.set_status_notice("Login: copilot device flow...");
-        self.begin_pending_login(PendingLogin::Copilot);
+        let default_host = crate::auth::copilot::copilot_github_host();
+        self.push_display_message(DisplayMessage::system(format!(
+            "GitHub Copilot Login\n\n\
+             Enter a GitHub deployment (github.com or a *.ghe.com domain).\n\
+             Press Enter to use {default_host}, or type /cancel to abort."
+        )));
+        self.set_status_notice("Login: GitHub deployment...");
+        self.begin_pending_login(PendingLogin::CopilotHost { default_host });
+    }
 
+    fn spawn_copilot_login(host: String) {
         tokio::spawn(async move {
             let client = crate::provider::shared_http_client();
 
-            let device_resp = match crate::auth::copilot::initiate_device_flow(&client).await {
-                Ok(resp) => resp,
-                Err(e) => {
-                    Bus::global().publish(BusEvent::LoginCompleted(LoginCompleted {
-                        provider: "copilot".to_string(),
-                        success: false,
-                        message: format!("Copilot device flow failed: {}", e),
-                    }));
-                    return;
-                }
-            };
+            let device_resp =
+                match crate::auth::copilot::initiate_device_flow_for_host(&client, &host).await {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        Bus::global().publish(BusEvent::LoginCompleted(LoginCompleted {
+                            provider: "copilot".to_string(),
+                            success: false,
+                            message: format!("Copilot device flow failed: {}", e),
+                        }));
+                        return;
+                    }
+                };
 
             let user_code = device_resp.user_code.clone();
             let verification_uri = device_resp.verification_uri.clone();
@@ -1722,10 +1731,11 @@ impl App {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             let _ = Self::open_auth_browser(&verification_uri);
 
-            let token = match crate::auth::copilot::poll_for_access_token(
+            let token = match crate::auth::copilot::poll_for_access_token_for_host(
                 &client,
                 &device_resp.device_code,
                 device_resp.interval,
+                &host,
             )
             .await
             {
@@ -1740,11 +1750,22 @@ impl App {
                 }
             };
 
-            let username = crate::auth::copilot::fetch_github_username(&client, &token)
-                .await
-                .unwrap_or_else(|_| "unknown".to_string());
+            let username =
+                crate::auth::copilot::fetch_github_username_for_host(&client, &token, &host)
+                    .await
+                    .unwrap_or_else(|_| "unknown".to_string());
 
-            match crate::auth::copilot::save_github_token(&token, &username) {
+            let api_endpoint =
+                crate::auth::copilot::fetch_copilot_api_endpoint(&client, &token, &host)
+                    .await
+                    .unwrap_or(None);
+
+            match crate::auth::copilot::save_github_token_for_host(
+                &token,
+                &username,
+                &host,
+                api_endpoint.as_deref(),
+            ) {
                 Ok(()) => {
                     Bus::global().publish(BusEvent::LoginCompleted(LoginCompleted {
                         provider: "copilot".to_string(),
@@ -1765,12 +1786,6 @@ impl App {
                 }
             }
         });
-
-        self.push_display_message(DisplayMessage::system(
-            "GitHub Copilot Login\n\n\
-             Starting device flow... please wait. Type /cancel to abort."
-                .to_string(),
-        ));
     }
 
     fn start_grok_build_login(&mut self) {
@@ -2030,15 +2045,19 @@ impl App {
         }
 
         if trimmed.is_empty() {
-            let help = match &pending {
-                PendingLogin::AutoImportSelection { .. } => {
-                    "Auto import is waiting for your selection. Reply with a to approve all, 1,3 to approve specific sources, or /cancel to abort.".to_string()
-                }
-                _ => "Login still in progress. Complete it in your browser, or paste the callback URL / authorization code here. Type /cancel to abort.".to_string(),
-            };
-            self.push_display_message(DisplayMessage::system(help));
-            self.pending_login = Some(pending);
-            return;
+            if let PendingLogin::CopilotHost { .. } = &pending {
+                // Fall through so the CopilotHost arm below resolves the stored default_host.
+            } else {
+                let help = match &pending {
+                    PendingLogin::AutoImportSelection { .. } => {
+                        "Auto import is waiting for your selection. Reply with a to approve all, 1,3 to approve specific sources, or /cancel to abort.".to_string()
+                    }
+                    _ => "Login still in progress. Complete it in your browser, or paste the callback URL / authorization code here. Type /cancel to abort.".to_string(),
+                };
+                self.push_display_message(DisplayMessage::system(help));
+                self.pending_login = Some(pending);
+                return;
+            }
         }
 
         match &pending {
@@ -2664,6 +2683,28 @@ impl App {
                         self.pending_login = Some(PendingLogin::CursorApiKey);
                     }
                 }
+            }
+            PendingLogin::CopilotHost { default_host } => {
+                let raw = input.trim();
+                let host = if raw.is_empty() {
+                    default_host.as_str()
+                } else {
+                    raw
+                };
+                let Some(host) = crate::auth::copilot::normalize_github_domain(host) else {
+                    self.push_display_message(DisplayMessage::error(
+                        "Invalid GitHub host. Use github.com or a *.ghe.com domain.".to_string(),
+                    ));
+                    self.pending_login = Some(PendingLogin::CopilotHost { default_host });
+                    return;
+                };
+                self.set_status_notice("Login: copilot device flow...");
+                Self::spawn_copilot_login(host);
+                self.push_display_message(DisplayMessage::system(
+                    "GitHub Copilot Login\n\nStarting device flow... please wait. Type /cancel to abort."
+                        .to_string(),
+                ));
+                self.pending_login = Some(PendingLogin::Copilot);
             }
             PendingLogin::Copilot => {
                 self.push_display_message(DisplayMessage::system(

@@ -1102,7 +1102,7 @@ fn ensure_antigravity_auth_allowed_for_explicit_choice() -> Result<()> {
 }
 
 fn ensure_copilot_auth_allowed_for_explicit_choice() -> Result<()> {
-    if auth::copilot::load_github_token().is_ok() {
+    if auth::copilot::load_github_token_for_host(&auth::copilot::copilot_github_host()).is_ok() {
         return Ok(());
     }
     let Some(source) = auth::copilot::has_unconsented_external_auth() else {
@@ -1127,7 +1127,7 @@ fn ensure_copilot_auth_allowed_for_explicit_choice() -> Result<()> {
 }
 
 fn maybe_enable_copilot_auth_for_auto(has_other_provider: bool) -> Result<bool> {
-    if auth::copilot::load_github_token().is_ok() {
+    if auth::copilot::load_github_token_for_host(&auth::copilot::copilot_github_host()).is_ok() {
         return Ok(true);
     }
     let Some(source) = auth::copilot::has_unconsented_external_auth() else {
@@ -1148,7 +1148,10 @@ fn maybe_enable_copilot_auth_for_auto(has_other_provider: bool) -> Result<bool> 
     }
     if prompt_to_trust_external_auth("GitHub Copilot", source.display_name(), &path)? {
         auth::copilot::trust_external_auth_source(source)?;
-        return Ok(auth::copilot::load_github_token().is_ok());
+        return Ok(
+            auth::copilot::load_github_token_for_host(&auth::copilot::copilot_github_host())
+                .is_ok(),
+        );
     }
     Ok(false)
 }

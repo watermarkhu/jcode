@@ -219,13 +219,16 @@ pub(super) async fn start_scriptable_login(
         }
         LoginProviderTarget::Copilot => {
             let client = crate::provider::shared_http_client();
-            let device_resp = auth::copilot::initiate_device_flow(&client).await?;
+            let domain = resolve_copilot_github_host_static(options)?;
+            let device_resp =
+                auth::copilot::initiate_device_flow_for_host(&client, &domain).await?;
             (
                 PendingScriptableLogin::Copilot {
                     device_code: device_resp.device_code.clone(),
                     user_code: device_resp.user_code.clone(),
                     verification_uri: device_resp.verification_uri.clone(),
                     interval: device_resp.interval,
+                    domain,
                 },
                 device_resp.verification_uri,
                 "complete",
@@ -585,6 +588,7 @@ pub(super) async fn complete_scriptable_copilot_login(
     let PendingScriptableLogin::Copilot {
         device_code,
         interval,
+        domain,
         ..
     } = load_pending_login(&pending_path, "copilot")?
     else {
@@ -592,11 +596,16 @@ pub(super) async fn complete_scriptable_copilot_login(
     };
 
     let client = crate::provider::shared_http_client();
-    let token = auth::copilot::poll_for_access_token(&client, &device_code, interval).await?;
-    let username = auth::copilot::fetch_github_username(&client, &token)
+    let token =
+        auth::copilot::poll_for_access_token_for_host(&client, &device_code, interval, &domain)
+            .await?;
+    let username = auth::copilot::fetch_github_username_for_host(&client, &token, &domain)
         .await
         .unwrap_or_else(|_| "unknown".to_string());
-    auth::copilot::save_github_token(&token, &username)?;
+    let api_endpoint = auth::copilot::fetch_copilot_api_endpoint(&client, &token, &domain)
+        .await
+        .unwrap_or(None);
+    auth::copilot::save_github_token_for_host(&token, &username, &domain, api_endpoint.as_deref())?;
     clear_pending_login(&pending_path);
     crate::telemetry::record_auth_success(provider_id, "oauth_device_code");
     emit_scriptable_auth_success(

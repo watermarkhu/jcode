@@ -5,6 +5,8 @@ fn make_test_provider(fetched: Vec<String>) -> CopilotApiProvider {
         client: jcode_base::provider::shared_http_client(),
         model: Arc::new(RwLock::new(DEFAULT_MODEL.to_string())),
         github_token: "test-token".to_string(),
+        host: "github.com".to_string(),
+        api_base: "https://api.githubcopilot.com".to_string(),
         bearer_token: Arc::new(tokio::sync::RwLock::new(None)),
         fetched_models: Arc::new(RwLock::new(fetched)),
         catalog_source: Arc::new(RwLock::new(CatalogSource::Live)),
@@ -17,6 +19,24 @@ fn make_test_provider(fetched: Vec<String>) -> CopilotApiProvider {
         reasoning_effort: Arc::new(RwLock::new(None)),
         created_at: std::time::Instant::now(),
     }
+}
+
+#[test]
+fn persisted_catalog_path_scopes_by_host() {
+    let github =
+        CopilotApiProvider::persisted_catalog_path("github.com").expect("github catalog path");
+    let ghe =
+        CopilotApiProvider::persisted_catalog_path("company.ghe.com").expect("ghe catalog path");
+
+    assert_eq!(
+        github.file_name().and_then(|name| name.to_str()),
+        Some("copilot_models_cache.json")
+    );
+    assert_eq!(
+        ghe.file_name().and_then(|name| name.to_str()),
+        Some("copilot_models_cache_company_ghe_com.json")
+    );
+    assert_ne!(github, ghe);
 }
 
 #[test]

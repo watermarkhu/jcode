@@ -401,6 +401,7 @@ fn login_no_browser_flag_parses() {
             api_key,
             api_key_env,
             no_validate,
+            github_host,
         }) => {
             assert!(provider.is_none());
             assert!(account.is_none());
@@ -415,6 +416,7 @@ fn login_no_browser_flag_parses() {
             assert!(api_key.is_none());
             assert!(api_key_env.is_none());
             assert!(!no_validate);
+            assert!(github_host.is_none());
         }
         other => panic!("unexpected command: {:?}", other),
     }
@@ -432,6 +434,27 @@ fn login_accepts_provider_positional() {
     match args.command {
         Some(Command::Login { provider, .. }) => {
             assert_eq!(provider, Some(ProviderChoice::Google));
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn login_github_host_flag_and_alias_parse() {
+    let args =
+        Args::try_parse_from(["jcode", "login", "--github-host", "company.ghe.com"]).unwrap();
+    match args.command {
+        Some(Command::Login { github_host, .. }) => {
+            assert_eq!(github_host.as_deref(), Some("company.ghe.com"));
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    let args =
+        Args::try_parse_from(["jcode", "login", "--github-enterprise", "company.ghe.com"]).unwrap();
+    match args.command {
+        Some(Command::Login { github_host, .. }) => {
+            assert_eq!(github_host.as_deref(), Some("company.ghe.com"));
         }
         other => panic!("unexpected command: {:?}", other),
     }
