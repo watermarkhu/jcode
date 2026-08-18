@@ -159,6 +159,22 @@ fn github_domain_url_builders() {
         github_api_base("company.ghe.com"),
         "https://api.company.ghe.com"
     );
+    assert_eq!(
+        copilot_token_url("github.com"),
+        "https://api.github.com/copilot_internal/v2/token"
+    );
+    assert_eq!(
+        copilot_token_url("company.ghe.com"),
+        "https://api.company.ghe.com/copilot_internal/v2/token"
+    );
+    assert_eq!(
+        copilot_user_url("github.com"),
+        "https://api.github.com/copilot_internal/user"
+    );
+    assert_eq!(
+        copilot_user_url("company.ghe.com"),
+        "https://api.company.ghe.com/copilot_internal/user"
+    );
 }
 
 #[test]
@@ -444,6 +460,40 @@ fn save_github_token_for_host_persists_effective_host() -> Result<()> {
     crate::env::set_var("JCODE_COPILOT_GITHUB_HOST", "override.ghe.com");
     assert_eq!(copilot_github_host(), "override.ghe.com");
     crate::env::remove_var("JCODE_COPILOT_GITHUB_HOST");
+
+    for (key, value) in saved {
+        if let Some(value) = value {
+            crate::env::set_var(&key, value);
+        } else {
+            crate::env::remove_var(&key);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn load_github_token_for_host_reads_saved_ghe_token() -> Result<()> {
+    let _guard = crate::storage::lock_test_env();
+    let dir = TempDir::new().map_err(|e| anyhow!(e))?;
+    let saved: Vec<(String, Option<String>)> = ["JCODE_HOME", "XDG_CONFIG_HOME"]
+        .iter()
+        .map(|key| (key.to_string(), std::env::var(key).ok()))
+        .collect();
+
+    crate::env::set_var("JCODE_HOME", dir.path());
+    crate::env::remove_var("XDG_CONFIG_HOME");
+
+    save_github_token_for_host(
+        "gho_ghe_token",
+        "enterprise-user",
+        "company.ghe.com",
+        Some("https://api.business.githubcopilot.com"),
+    )?;
+
+    assert_eq!(
+        load_github_token_for_host("company.ghe.com")?,
+        "gho_ghe_token"
+    );
 
     for (key, value) in saved {
         if let Some(value) = value {
