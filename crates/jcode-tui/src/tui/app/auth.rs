@@ -2045,15 +2045,19 @@ impl App {
         }
 
         if trimmed.is_empty() {
-            let help = match &pending {
-                PendingLogin::AutoImportSelection { .. } => {
-                    "Auto import is waiting for your selection. Reply with a to approve all, 1,3 to approve specific sources, or /cancel to abort.".to_string()
-                }
-                _ => "Login still in progress. Complete it in your browser, or paste the callback URL / authorization code here. Type /cancel to abort.".to_string(),
-            };
-            self.push_display_message(DisplayMessage::system(help));
-            self.pending_login = Some(pending);
-            return;
+            if let PendingLogin::CopilotHost { .. } = &pending {
+                // Fall through so the CopilotHost arm below resolves the stored default_host.
+            } else {
+                let help = match &pending {
+                    PendingLogin::AutoImportSelection { .. } => {
+                        "Auto import is waiting for your selection. Reply with a to approve all, 1,3 to approve specific sources, or /cancel to abort.".to_string()
+                    }
+                    _ => "Login still in progress. Complete it in your browser, or paste the callback URL / authorization code here. Type /cancel to abort.".to_string(),
+                };
+                self.push_display_message(DisplayMessage::system(help));
+                self.pending_login = Some(pending);
+                return;
+            }
         }
 
         match &pending {
