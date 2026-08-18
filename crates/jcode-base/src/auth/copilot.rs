@@ -892,11 +892,19 @@ pub async fn exchange_github_token_for_host(
     github_token: &str,
     host: &str,
 ) -> Result<CopilotApiToken> {
+    exchange_github_token_with_url(client, github_token, &copilot_token_url(host)).await
+}
+
+async fn exchange_github_token_with_url(
+    client: &reqwest::Client,
+    github_token: &str,
+    url: &str,
+) -> Result<CopilotApiToken> {
     let mut attempt: u32 = 0;
     loop {
         attempt += 1;
         let resp = client
-            .get(copilot_token_url(host))
+            .get(url)
             .header("Authorization", format!("Token {}", github_token))
             .header("User-Agent", EDITOR_VERSION)
             .send()
@@ -1032,11 +1040,26 @@ pub async fn poll_for_access_token_for_host(
     interval: u64,
     host: &str,
 ) -> Result<String> {
+    poll_for_access_token_with_url(
+        client,
+        device_code,
+        interval,
+        &github_access_token_url(host),
+    )
+    .await
+}
+
+async fn poll_for_access_token_with_url(
+    client: &reqwest::Client,
+    device_code: &str,
+    interval: u64,
+    url: &str,
+) -> Result<String> {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
 
         let resp = client
-            .post(github_access_token_url(host))
+            .post(url)
             .header("Accept", "application/json")
             .form(&[
                 ("client_id", GITHUB_COPILOT_CLIENT_ID),
@@ -1255,8 +1278,16 @@ pub async fn fetch_github_username_for_host(
     token: &str,
     host: &str,
 ) -> Result<String> {
+    fetch_github_username_with_url(client, token, &format!("{}/user", github_api_base(host))).await
+}
+
+async fn fetch_github_username_with_url(
+    client: &reqwest::Client,
+    token: &str,
+    url: &str,
+) -> Result<String> {
     let resp = client
-        .get(format!("{}/user", github_api_base(host)))
+        .get(url)
         .header("Authorization", format!("Bearer {}", token))
         .header("User-Agent", EDITOR_VERSION)
         .send()
@@ -1284,6 +1315,14 @@ pub async fn fetch_copilot_api_endpoint(
     token: &str,
     host: &str,
 ) -> Result<Option<String>> {
+    fetch_copilot_api_endpoint_with_url(client, token, &copilot_user_url(host)).await
+}
+
+async fn fetch_copilot_api_endpoint_with_url(
+    client: &reqwest::Client,
+    token: &str,
+    url: &str,
+) -> Result<Option<String>> {
     #[derive(Deserialize)]
     struct CopilotUser {
         endpoints: Option<CopilotUserEndpoints>,
@@ -1295,7 +1334,7 @@ pub async fn fetch_copilot_api_endpoint(
     }
 
     let resp = match client
-        .get(copilot_user_url(host))
+        .get(url)
         .header("Accept", "application/json")
         .header("Authorization", format!("Bearer {}", token))
         .header("User-Agent", EDITOR_VERSION)

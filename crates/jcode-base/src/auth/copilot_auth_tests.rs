@@ -837,6 +837,110 @@ async fn fetch_available_models_uses_provided_api_base() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn exchange_github_token_with_url_hits_token_endpoint() -> Result<()> {
+    let expires = chrono::Utc::now().timestamp() + 3600;
+    let response_body = serde_json::json!({
+        "token": "bearer-123",
+        "expires_at": expires
+    })
+    .to_string();
+    let (port, handle) = one_shot_http_server(response_body, 200).await;
+    let url = format!("http://127.0.0.1:{port}/copilot_internal/v2/token");
+
+    let token = exchange_github_token_with_url(&reqwest::Client::new(), "gho-123", &url).await?;
+    let (method, path, headers) = handle.await.map_err(|error| anyhow!(error))?;
+
+    assert_eq!(method, "GET");
+    assert_eq!(path, "/copilot_internal/v2/token");
+    assert_eq!(
+        headers.get("authorization").map(String::as_str),
+        Some("Token gho-123")
+    );
+    assert_eq!(token.token, "bearer-123");
+    assert_eq!(token.expires_at, expires);
+    Ok(())
+}
+
+#[tokio::test]
+async fn poll_for_access_token_with_url_posts_and_returns_token() -> Result<()> {
+    let response_body = serde_json::json!({ "access_token": "gho-polled" }).to_string();
+    let (port, handle) = one_shot_http_server(response_body, 200).await;
+    let url = format!("http://127.0.0.1:{port}/login/oauth/access_token");
+
+    let token =
+        poll_for_access_token_with_url(&reqwest::Client::new(), "device-123", 0, &url).await?;
+    let (method, path, _headers) = handle.await.map_err(|error| anyhow!(error))?;
+
+    assert_eq!(method, "POST");
+    assert_eq!(path, "/login/oauth/access_token");
+    assert_eq!(token, "gho-polled");
+    Ok(())
+}
+
+#[tokio::test]
+async fn fetch_github_username_with_url_hits_user_endpoint() -> Result<()> {
+    let response_body = serde_json::json!({ "login": "octocat" }).to_string();
+    let (port, handle) = one_shot_http_server(response_body, 200).await;
+    let url = format!("http://127.0.0.1:{port}/user");
+
+    let username = fetch_github_username_with_url(&reqwest::Client::new(), "gho-123", &url).await?;
+    let (method, path, headers) = handle.await.map_err(|error| anyhow!(error))?;
+
+    assert_eq!(method, "GET");
+    assert_eq!(path, "/user");
+    assert_eq!(
+        headers.get("authorization").map(String::as_str),
+        Some("Bearer gho-123")
+    );
+    assert_eq!(username, "octocat");
+    Ok(())
+}
+
+#[tokio::test]
+async fn fetch_copilot_api_endpoint_with_url_parses_endpoints_api() -> Result<()> {
+    let response_body = serde_json::json!({
+        "endpoints": { "api": "https://api.business.githubcopilot.com/" }
+    })
+    .to_string();
+    let (port, handle) = one_shot_http_server(response_body, 200).await;
+    let url = format!("http://127.0.0.1:{port}/copilot_internal/user");
+
+    let endpoint =
+        fetch_copilot_api_endpoint_with_url(&reqwest::Client::new(), "gho-123", &url).await?;
+    let (method, path, headers) = handle.await.map_err(|error| anyhow!(error))?;
+
+    assert_eq!(method, "GET");
+    assert_eq!(path, "/copilot_internal/user");
+    assert_eq!(
+        headers.get("authorization").map(String::as_str),
+        Some("Bearer gho-123")
+    );
+    assert_eq!(
+        headers.get("x-github-api-version").map(String::as_str),
+        Some(COPILOT_USER_API_VERSION)
+    );
+    assert_eq!(
+        endpoint.as_deref(),
+        Some("https://api.business.githubcopilot.com")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn fetch_copilot_api_endpoint_with_url_returns_none_on_error() -> Result<()> {
+    let response_body = serde_json::json!({ "message": "forbidden" }).to_string();
+    let (port, handle) = one_shot_http_server(response_body, 403).await;
+    let url = format!("http://127.0.0.1:{port}/copilot_internal/user");
+
+    let endpoint =
+        fetch_copilot_api_endpoint_with_url(&reqwest::Client::new(), "gho-123", &url).await?;
+    handle.await.map_err(|error| anyhow!(error))?;
+
+    assert_eq!(endpoint, None);
+    Ok(())
+}
+
 #[test]
 fn load_token_multiple_hosts() -> Result<()> {
     let dir = TempDir::new().map_err(|e| anyhow!(e))?;
