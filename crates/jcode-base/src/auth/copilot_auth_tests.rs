@@ -3,6 +3,32 @@ use anyhow::{Result, anyhow};
 
 use tempfile::TempDir;
 
+struct EnvRestore {
+    saved: Vec<(String, Option<String>)>,
+}
+
+impl EnvRestore {
+    fn new(keys: &[&str]) -> Self {
+        let saved = keys
+            .iter()
+            .map(|key| (key.to_string(), std::env::var(key).ok()))
+            .collect();
+        Self { saved }
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        for (key, value) in &self.saved {
+            if let Some(value) = value {
+                crate::env::set_var(key, value);
+            } else {
+                crate::env::remove_var(key);
+            }
+        }
+    }
+}
+
 async fn one_shot_http_server(
     response_body: String,
     status: u16,
@@ -346,8 +372,7 @@ fn save_github_token_creates_config_dir() -> Result<()> {
     let _guard = crate::storage::lock_test_env();
     let dir = TempDir::new().map_err(|e| anyhow!(e))?;
     let config_dir = dir.path().join("github-copilot");
-    let prev_jcode_home = std::env::var_os("JCODE_HOME");
-    let prev_xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
+    let _env = EnvRestore::new(&["JCODE_HOME", "XDG_CONFIG_HOME"]);
 
     crate::env::remove_var("JCODE_HOME");
     crate::env::set_var(
@@ -366,17 +391,6 @@ fn save_github_token_creates_config_dir() -> Result<()> {
     let loaded = load_token_from_json(&hosts_path)?;
     assert_eq!(loaded, "gho_newtoken");
 
-    if let Some(prev) = prev_jcode_home {
-        crate::env::set_var("JCODE_HOME", prev);
-    } else {
-        crate::env::remove_var("JCODE_HOME");
-    }
-
-    if let Some(prev) = prev_xdg_config_home {
-        crate::env::set_var("XDG_CONFIG_HOME", prev);
-    } else {
-        crate::env::remove_var("XDG_CONFIG_HOME");
-    }
     Ok(())
 }
 
@@ -385,8 +399,7 @@ fn save_github_token_for_host_writes_ghe_entry_and_endpoint() -> Result<()> {
     let _guard = crate::storage::lock_test_env();
     let dir = TempDir::new().map_err(|e| anyhow!(e))?;
     let config_dir = dir.path().join("github-copilot");
-    let prev_jcode_home = std::env::var_os("JCODE_HOME");
-    let prev_xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
+    let _env = EnvRestore::new(&["JCODE_HOME", "XDG_CONFIG_HOME"]);
 
     crate::env::remove_var("JCODE_HOME");
     crate::env::set_var(
@@ -420,16 +433,6 @@ fn save_github_token_for_host_writes_ghe_entry_and_endpoint() -> Result<()> {
         Some("https://api.business.githubcopilot.com")
     );
 
-    if let Some(prev) = prev_jcode_home {
-        crate::env::set_var("JCODE_HOME", prev);
-    } else {
-        crate::env::remove_var("JCODE_HOME");
-    }
-    if let Some(prev) = prev_xdg_config_home {
-        crate::env::set_var("XDG_CONFIG_HOME", prev);
-    } else {
-        crate::env::remove_var("XDG_CONFIG_HOME");
-    }
     Ok(())
 }
 
@@ -437,11 +440,7 @@ fn save_github_token_for_host_writes_ghe_entry_and_endpoint() -> Result<()> {
 fn save_github_token_for_host_persists_effective_host() -> Result<()> {
     let _guard = crate::storage::lock_test_env();
     let dir = TempDir::new().map_err(|e| anyhow!(e))?;
-    let saved: Vec<(String, Option<String>)> =
-        ["JCODE_HOME", "JCODE_COPILOT_GITHUB_HOST", "GH_HOST"]
-            .iter()
-            .map(|key| (key.to_string(), std::env::var(key).ok()))
-            .collect();
+    let _env = EnvRestore::new(&["JCODE_HOME", "JCODE_COPILOT_GITHUB_HOST", "GH_HOST"]);
 
     crate::env::set_var("JCODE_HOME", dir.path());
     crate::env::remove_var("JCODE_COPILOT_GITHUB_HOST");
@@ -461,13 +460,6 @@ fn save_github_token_for_host_persists_effective_host() -> Result<()> {
     assert_eq!(copilot_github_host(), "override.ghe.com");
     crate::env::remove_var("JCODE_COPILOT_GITHUB_HOST");
 
-    for (key, value) in saved {
-        if let Some(value) = value {
-            crate::env::set_var(&key, value);
-        } else {
-            crate::env::remove_var(&key);
-        }
-    }
     Ok(())
 }
 
@@ -475,13 +467,19 @@ fn save_github_token_for_host_persists_effective_host() -> Result<()> {
 fn load_github_token_for_host_reads_saved_ghe_token() -> Result<()> {
     let _guard = crate::storage::lock_test_env();
     let dir = TempDir::new().map_err(|e| anyhow!(e))?;
-    let saved: Vec<(String, Option<String>)> = ["JCODE_HOME", "XDG_CONFIG_HOME"]
-        .iter()
-        .map(|key| (key.to_string(), std::env::var(key).ok()))
-        .collect();
+    let _env = EnvRestore::new(&[
+        "JCODE_HOME",
+        "XDG_CONFIG_HOME",
+        "COPILOT_GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+    ]);
 
     crate::env::set_var("JCODE_HOME", dir.path());
     crate::env::remove_var("XDG_CONFIG_HOME");
+    crate::env::remove_var("COPILOT_GITHUB_TOKEN");
+    crate::env::remove_var("GH_TOKEN");
+    crate::env::remove_var("GITHUB_TOKEN");
 
     save_github_token_for_host(
         "gho_ghe_token",
@@ -495,13 +493,6 @@ fn load_github_token_for_host_reads_saved_ghe_token() -> Result<()> {
         "gho_ghe_token"
     );
 
-    for (key, value) in saved {
-        if let Some(value) = value {
-            crate::env::set_var(&key, value);
-        } else {
-            crate::env::remove_var(&key);
-        }
-    }
     Ok(())
 }
 
@@ -509,14 +500,11 @@ fn load_github_token_for_host_reads_saved_ghe_token() -> Result<()> {
 fn copilot_api_endpoint_for_host_reads_saved_endpoint_and_env_override() -> Result<()> {
     let _guard = crate::storage::lock_test_env();
     let dir = TempDir::new().map_err(|e| anyhow!(e))?;
-    let saved: Vec<(String, Option<String>)> = [
+    let _env = EnvRestore::new(&[
         "JCODE_HOME",
         "JCODE_COPILOT_API_ENDPOINT",
         "XDG_CONFIG_HOME",
-    ]
-    .iter()
-    .map(|key| (key.to_string(), std::env::var(key).ok()))
-    .collect();
+    ]);
 
     crate::env::set_var("JCODE_HOME", dir.path());
     crate::env::remove_var("JCODE_COPILOT_API_ENDPOINT");
@@ -545,13 +533,6 @@ fn copilot_api_endpoint_for_host_reads_saved_endpoint_and_env_override() -> Resu
     );
     crate::env::remove_var("JCODE_COPILOT_API_ENDPOINT");
 
-    for (key, value) in saved {
-        if let Some(value) = value {
-            crate::env::set_var(&key, value);
-        } else {
-            crate::env::remove_var(&key);
-        }
-    }
     Ok(())
 }
 

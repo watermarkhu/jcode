@@ -80,6 +80,36 @@ fn load_pending_login_accepts_legacy_format() {
 }
 
 #[test]
+fn load_pending_login_accepts_legacy_copilot_without_domain() {
+    let _guard = crate::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let prev_home = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", temp.path());
+
+    let path = pending_login_path("copilot").expect("pending path");
+    let legacy = serde_json::json!({
+        "expires_at_ms": current_time_ms() + 60_000,
+        "login": {
+            "provider": "copilot",
+            "device_code": "device-code",
+            "user_code": "user-code",
+            "verification_uri": "https://company.ghe.com/login/device",
+            "interval": 5
+        }
+    });
+    crate::storage::write_json_secret(&path, &legacy).expect("write legacy pending login");
+
+    match load_pending_login(&path, "copilot").expect("load legacy pending login") {
+        PendingScriptableLogin::Copilot { domain, .. } => {
+            assert_eq!(domain, "github.com");
+        }
+        other => panic!("unexpected login variant: {:?}", other),
+    }
+
+    set_or_clear_env("JCODE_HOME", prev_home);
+}
+
+#[test]
 fn uses_scriptable_flow_detects_dash_input_without_consuming_stdin() {
     let options = LoginOptions {
         callback_url: Some("-".to_string()),

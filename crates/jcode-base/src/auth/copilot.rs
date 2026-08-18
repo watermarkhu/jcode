@@ -1115,7 +1115,12 @@ pub fn save_github_token_for_host(
     host: &str,
     api_endpoint: Option<&str>,
 ) -> Result<()> {
-    let host = normalize_github_domain(host).unwrap_or_else(|| host.trim().to_ascii_lowercase());
+    let host = normalize_github_domain(host).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Invalid GitHub host '{}'. Use github.com or a *.ghe.com domain.",
+            host
+        )
+    })?;
     let config_dir = legacy_copilot_config_dir();
     std::fs::create_dir_all(&config_dir)
         .with_context(|| format!("Failed to create {}", config_dir.display()))?;

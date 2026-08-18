@@ -92,22 +92,29 @@ impl CopilotApiProvider {
         }
     }
 
-    fn persisted_catalog_path() -> Result<std::path::PathBuf> {
-        Ok(jcode_base::storage::app_config_dir()?.join("copilot_models_cache.json"))
+    fn persisted_catalog_path(host: &str) -> Result<std::path::PathBuf> {
+        let normalized = copilot_auth::normalize_github_domain(host)
+            .unwrap_or_else(|| host.trim().to_ascii_lowercase());
+        let file = if normalized == "github.com" {
+            "copilot_models_cache.json".to_string()
+        } else {
+            format!("copilot_models_cache_{}.json", normalized.replace('.', "_"))
+        };
+        Ok(jcode_base::storage::app_config_dir()?.join(file))
     }
 
-    fn load_persisted_catalog() -> Option<PersistedCatalog> {
-        let path = Self::persisted_catalog_path().ok()?;
+    fn load_persisted_catalog(host: &str) -> Option<PersistedCatalog> {
+        let path = Self::persisted_catalog_path(host).ok()?;
         jcode_base::storage::read_json(&path)
             .ok()
             .filter(|catalog: &PersistedCatalog| !catalog.models.is_empty())
     }
 
-    fn persist_catalog(models: &[String]) {
+    fn persist_catalog(models: &[String], host: &str) {
         if models.is_empty() {
             return;
         }
-        let Ok(path) = Self::persisted_catalog_path() else {
+        let Ok(path) = Self::persisted_catalog_path(host) else {
             return;
         };
         let payload = PersistedCatalog {
@@ -124,7 +131,7 @@ impl CopilotApiProvider {
     }
 
     fn seed_cached_catalog(&self) {
-        if let Some(catalog) = Self::load_persisted_catalog() {
+        if let Some(catalog) = Self::load_persisted_catalog(&self.host) {
             if let Ok(mut models) = self.fetched_models.try_write() {
                 *models = catalog.models;
             }
@@ -382,6 +389,7 @@ impl CopilotApiProvider {
                         .try_read()
                         .map(|models| models.clone())
                         .unwrap_or_default(),
+                    &self.host,
                 );
             }
             Err(e) => {

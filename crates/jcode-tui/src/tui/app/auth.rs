@@ -1670,12 +1670,19 @@ impl App {
     }
 
     fn start_copilot_login(&mut self) {
-        self.set_status_notice("Login: copilot device flow...");
-        self.begin_pending_login(PendingLogin::Copilot);
+        let default_host = crate::auth::copilot::copilot_github_host();
+        self.push_display_message(DisplayMessage::system(format!(
+            "GitHub Copilot Login\n\n\
+             Enter a GitHub deployment (github.com or a *.ghe.com domain).\n\
+             Press Enter to use {default_host}, or type /cancel to abort."
+        )));
+        self.set_status_notice("Login: GitHub deployment...");
+        self.begin_pending_login(PendingLogin::CopilotHost { default_host });
+    }
 
+    fn spawn_copilot_login(host: String) {
         tokio::spawn(async move {
             let client = crate::provider::shared_http_client();
-            let host = crate::auth::copilot::copilot_github_host();
 
             let device_resp =
                 match crate::auth::copilot::initiate_device_flow_for_host(&client, &host).await {
@@ -1779,12 +1786,6 @@ impl App {
                 }
             }
         });
-
-        self.push_display_message(DisplayMessage::system(
-            "GitHub Copilot Login\n\n\
-             Starting device flow... please wait. Type /cancel to abort."
-                .to_string(),
-        ));
     }
 
     fn start_grok_build_login(&mut self) {
@@ -2678,6 +2679,28 @@ impl App {
                         self.pending_login = Some(PendingLogin::CursorApiKey);
                     }
                 }
+            }
+            PendingLogin::CopilotHost { default_host } => {
+                let raw = input.trim();
+                let host = if raw.is_empty() {
+                    default_host.as_str()
+                } else {
+                    raw
+                };
+                let Some(host) = crate::auth::copilot::normalize_github_domain(host) else {
+                    self.push_display_message(DisplayMessage::error(
+                        "Invalid GitHub host. Use github.com or a *.ghe.com domain.".to_string(),
+                    ));
+                    self.pending_login = Some(PendingLogin::CopilotHost { default_host });
+                    return;
+                };
+                self.set_status_notice("Login: copilot device flow...");
+                Self::spawn_copilot_login(host);
+                self.push_display_message(DisplayMessage::system(
+                    "GitHub Copilot Login\n\nStarting device flow... please wait. Type /cancel to abort."
+                        .to_string(),
+                ));
+                self.pending_login = Some(PendingLogin::Copilot);
             }
             PendingLogin::Copilot => {
                 self.push_display_message(DisplayMessage::system(

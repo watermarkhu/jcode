@@ -105,8 +105,13 @@ enum PendingScriptableLogin {
         user_code: String,
         verification_uri: String,
         interval: u64,
+        #[serde(default = "default_copilot_domain")]
         domain: String,
     },
+}
+
+fn default_copilot_domain() -> String {
+    "github.com".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1019,6 +1024,10 @@ fn login_copilot_flow(options: &LoginOptions) -> Result<()> {
 }
 
 fn resolve_copilot_github_host(options: &LoginOptions) -> Result<String> {
+    if options.github_host.is_some() {
+        return resolve_copilot_github_host_static(options);
+    }
+
     let host = resolve_copilot_github_host_static(options)?;
     if host != "github.com" || !io::stdin().is_terminal() {
         return Ok(host);
