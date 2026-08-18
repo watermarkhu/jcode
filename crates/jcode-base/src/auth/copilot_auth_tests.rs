@@ -402,6 +402,56 @@ fn save_github_token_for_host_persists_effective_host() -> Result<()> {
 }
 
 #[test]
+fn copilot_api_endpoint_for_host_reads_saved_endpoint_and_env_override() -> Result<()> {
+    let _guard = crate::storage::lock_test_env();
+    let dir = TempDir::new().map_err(|e| anyhow!(e))?;
+    let saved: Vec<(String, Option<String>)> = [
+        "JCODE_HOME",
+        "JCODE_COPILOT_API_ENDPOINT",
+        "XDG_CONFIG_HOME",
+    ]
+    .iter()
+    .map(|key| (key.to_string(), std::env::var(key).ok()))
+    .collect();
+
+    crate::env::set_var("JCODE_HOME", dir.path());
+    crate::env::remove_var("JCODE_COPILOT_API_ENDPOINT");
+    crate::env::remove_var("XDG_CONFIG_HOME");
+
+    save_github_token_for_host(
+        "gho_ghe_token",
+        "enterprise-user",
+        "company.ghe.com",
+        Some("https://api.business.githubcopilot.com/"),
+    )?;
+
+    assert_eq!(
+        copilot_api_endpoint_for_host("company.ghe.com").as_deref(),
+        Some("https://api.business.githubcopilot.com")
+    );
+    assert_eq!(copilot_api_endpoint_for_host("github.com"), None);
+
+    crate::env::set_var(
+        "JCODE_COPILOT_API_ENDPOINT",
+        "https://override.example.com/",
+    );
+    assert_eq!(
+        copilot_api_endpoint_for_host("company.ghe.com").as_deref(),
+        Some("https://override.example.com")
+    );
+    crate::env::remove_var("JCODE_COPILOT_API_ENDPOINT");
+
+    for (key, value) in saved {
+        if let Some(value) = value {
+            crate::env::set_var(&key, value);
+        } else {
+            crate::env::remove_var(&key);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn legacy_copilot_config_dir_uses_jcode_home_external_dir() -> Result<()> {
     let _guard = crate::storage::lock_test_env();
     let dir = TempDir::new().map_err(|e| anyhow!(e))?;

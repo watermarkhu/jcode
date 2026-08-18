@@ -783,14 +783,13 @@ fn select_preferred_token_entry<'a>(
             };
 
             let normalized_host = normalize_github_host_key(host)?;
+            if let Some(preferred) = preferred_host
+                && !host_matches_preferred(preferred, &normalized_host)
+            {
+                return None;
+            }
             let raw_host = host.trim().to_ascii_lowercase();
-            let priority = if preferred_host.is_some_and(|preferred| normalized_host == preferred) {
-                0
-            } else if preferred_host.is_some() {
-                github_host_priority(&raw_host, &normalized_host).saturating_add(10)
-            } else {
-                github_host_priority(&raw_host, &normalized_host)
-            };
+            let priority = github_host_priority(&raw_host, &normalized_host);
             let endpoint = value
                 .get("api_endpoint")
                 .and_then(serde_json::Value::as_str)
@@ -804,6 +803,14 @@ fn select_preferred_token_entry<'a>(
                 .then_with(|| left.2.cmp(&right.2))
         })
         .map(|(_, _, _, token, endpoint)| (token, endpoint))
+}
+
+fn host_matches_preferred(preferred: &str, normalized_host: &str) -> bool {
+    if preferred == "github.com" {
+        normalized_host == "github.com" || normalized_host == "api.github.com"
+    } else {
+        normalized_host == preferred
+    }
 }
 
 fn github_host_priority(raw_host: &str, normalized_host: &str) -> u8 {
