@@ -3,6 +3,60 @@ use anyhow::{Result, anyhow};
 
 use tempfile::TempDir;
 
+async fn one_shot_http_server(
+    response_body: String,
+    status: u16,
+) -> (
+    u16,
+    tokio::task::JoinHandle<(String, String, std::collections::HashMap<String, String>)>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock server");
+    let port = listener.local_addr().expect("listener port").port();
+    let handle = tokio::spawn(async move {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (stream, _) = listener.accept().await.expect("accept connection");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+
+        let mut request_line = String::new();
+        reader
+            .read_line(&mut request_line)
+            .await
+            .expect("read line");
+        let parts: Vec<&str> = request_line.split_whitespace().collect();
+        let method = parts.first().unwrap_or(&"").to_string();
+        let path = parts.get(1).unwrap_or(&"").to_string();
+
+        let mut headers = std::collections::HashMap::new();
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read header");
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                break;
+            }
+            if let Some((key, value)) = trimmed.split_once(':') {
+                headers.insert(key.trim().to_lowercase(), value.trim().to_string());
+            }
+        }
+
+        let response = format!(
+            "HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            status,
+            response_body.len(),
+            response_body
+        );
+        writer.write_all(response.as_bytes()).await.expect("write");
+
+        (method, path, headers)
+    });
+
+    (port, handle)
+}
+
 #[test]
 fn copilot_api_token_not_expired() {
     let future_ts = chrono::Utc::now().timestamp() + 3600;
@@ -701,6 +755,35 @@ fn copilot_model_info_minimal() -> Result<()> {
     assert_eq!(model.id, "gpt-4o");
     assert_eq!(model.name, "");
     assert!(!model.model_picker_enabled);
+    Ok(())
+}
+
+#[tokio::test]
+async fn fetch_available_models_uses_provided_api_base() -> Result<()> {
+    let response_body = serde_json::json!({
+        "data": [{
+            "id": "claude-sonnet-4",
+            "name": "Claude Sonnet 4",
+            "vendor": "anthropic",
+            "version": "1",
+            "model_picker_enabled": true
+        }]
+    })
+    .to_string();
+    let (port, handle) = one_shot_http_server(response_body, 200).await;
+    let api_base = format!("http://127.0.0.1:{port}");
+
+    let models = fetch_available_models(&reqwest::Client::new(), "bearer-123", &api_base).await?;
+    let (method, path, headers) = handle.await.map_err(|error| anyhow!(error))?;
+
+    assert_eq!(method, "GET");
+    assert_eq!(path, "/models");
+    assert_eq!(
+        headers.get("authorization").map(String::as_str),
+        Some("Bearer bearer-123")
+    );
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].id, "claude-sonnet-4");
     Ok(())
 }
 
